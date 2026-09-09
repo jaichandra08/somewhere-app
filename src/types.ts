@@ -36,6 +36,7 @@ export interface Experience {
   moodTags: string[];
   shareable: boolean;
   crowdEnabled: boolean;
+  sharedPoolResponse?: boolean;
   imageAllowed: boolean;
   textAllowed: boolean;
   active: boolean;

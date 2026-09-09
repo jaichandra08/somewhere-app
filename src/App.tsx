@@ -67,6 +67,7 @@ export default function App() {
 
   // Route matching: experience/:id
   useEffect(() => {
+    let cancelled = false;
     const expMatch = currentPath.match(/^\/experience\/([^/?#]+)/);
     if (expMatch) {
       const expId = expMatch[1];
@@ -75,20 +76,30 @@ export default function App() {
         setExpError(null);
         getExperience(expId)
           .then((exp) => {
-            setSelectedExperience(exp);
-          })
-          .catch(() => {
-            // fallback
-            const offline = getOfflineSeedExperiences().find((e) => e.id === expId);
-            if (offline) {
-              setSelectedExperience(offline);
-            } else {
-              setExpError('Could not find that experience.');
+            if (!cancelled) {
+              setSelectedExperience(exp);
             }
           })
-          .finally(() => setLoadingExp(false));
+          .catch(() => {
+            if (!cancelled) {
+              const offline = getOfflineSeedExperiences().find((e) => e.id === expId);
+              if (offline) {
+                setSelectedExperience(offline);
+              } else {
+                setExpError('Could not find that experience.');
+              }
+            }
+          })
+          .finally(() => {
+            if (!cancelled) {
+              setLoadingExp(false);
+            }
+          });
       }
     }
+    return () => {
+      cancelled = true;
+    };
   }, [currentPath]);
 
   const handleNextRandomExperience = async () => {

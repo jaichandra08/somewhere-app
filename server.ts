@@ -289,7 +289,7 @@ app.post('/api/experiences/random', (req, res) => {
 // Complete Experience
 app.post('/api/experiences/:id/complete', (req, res) => {
   const exp = experiences.get(req.params.id);
-  if (!exp) {
+  if (!exp || !exp.active) {
     return res.status(404).json({ error: 'This one has wandered off.' });
   }
 
@@ -312,7 +312,7 @@ app.post('/api/experiences/:id/complete', (req, res) => {
 // Save Experience
 app.post('/api/experiences/:id/save', (req, res) => {
   const exp = experiences.get(req.params.id);
-  if (!exp) {
+  if (!exp || !exp.active) {
     return res.status(404).json({ error: 'This one has wandered off.' });
   }
 
@@ -453,10 +453,22 @@ app.get('/api/share/:token', (req, res) => {
 
 app.post('/api/share/:token/complete', (req, res) => {
   const tokenRecord = shareTokens.get(req.params.token);
-  if (tokenRecord) {
-    tokenRecord.completedCount++;
-    analyticsEvents.push({ eventType: 'share_completed', timestamp: new Date().toISOString() });
+  if (!tokenRecord) {
+    return res.status(404).json({ error: 'That little thing wandered off.', code: 'TOKEN_NOT_FOUND' });
   }
+
+  if (new Date() > new Date(tokenRecord.expiresAt)) {
+    return res.status(410).json({ error: 'That little thing has expired.', code: 'TOKEN_EXPIRED' });
+  }
+
+  const exp = experiences.get(tokenRecord.experienceId);
+  if (!exp || !exp.active) {
+    return res.status(404).json({ error: 'That little thing wandered off.', code: 'EXPERIENCE_UNAVAILABLE' });
+  }
+
+  tokenRecord.completedCount++;
+  analyticsEvents.push({ eventType: 'share_completed', timestamp: new Date().toISOString() });
+
   res.json({ success: true, message: 'You completed it.' });
 });
 
@@ -466,10 +478,11 @@ app.post('/api/share/:token/complete', (req, res) => {
 
 const CROWD_CANDIDATE_IDS = [
   'exp-031', // Find Something Blue Right Now
-  'exp-018', // Anonymous Encouragement Drop
-  'exp-034', // Two-Sentence Memoir
-  'exp-061', // The Cloud Classification Bureau
-  'exp-088'  // The Tiny Map
+  'exp-032', // What Color is Your Sky Right Now?
+  'exp-033', // One Tiny Thing That Made You Smile
+  'exp-034', // Leave an Anonymous Good Wish
+  'exp-035', // Draw a Very Small Hat
+  'exp-087'  // Leave One Song Title for the Crowd
 ];
 
 function ensureActiveCrowdSession(): QuietCrowdSession {
@@ -557,7 +570,11 @@ app.post('/api/crowd/submit', rateLimiter(10, 60000), (req, res) => {
   }
 
   const session = getOrCreateSession(req);
-  const { type, content } = req.body;
+  const { type, content, crowdSessionId } = req.body;
+
+  if (crowdSessionId && crowdSessionId !== currentSession.id) {
+    return res.status(409).json({ error: 'This submission does not match the active session. Please refresh.', code: 'SESSION_MISMATCH' });
+  }
 
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ error: 'Submission cannot be empty.' });

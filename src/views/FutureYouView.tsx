@@ -8,18 +8,20 @@ export const FutureYouView: React.FC = () => {
   const [decision, setDecision] = useState('');
   const [result, setResult] = useState<(FutureDecision & { disclaimer: string }) | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!decision.trim()) return;
     setLoading(true);
+    setError(null);
     playTap();
     try {
       const res = await generateFutureYou(decision.trim());
       setResult(res);
       playSuccess();
     } catch {
-      // fallback
+      setError('Could not consult the timelines right now. Please try again in a moment.');
     } finally {
       setLoading(false);
     }
@@ -56,6 +58,12 @@ export const FutureYouView: React.FC = () => {
         <div className="text-right text-[11px] text-stone-400">
           {decision.length}/150
         </div>
+
+        {error && (
+          <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-rose-600 dark:text-rose-400 text-xs">
+            {error}
+          </div>
+        )}
 
         <button
           id="generate-future-you-btn"

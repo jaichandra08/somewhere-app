@@ -187,27 +187,38 @@ export async function getRandomExperience(options?: {
 }
 
 export async function completeExperience(id: string): Promise<{ success: boolean; completedCount: number }> {
-  addCompletedId(id);
   try {
-    return await request<{ success: boolean; completedCount: number }>(`/api/experiences/${id}/complete`, {
+    const res = await request<{ success: boolean; completedCount: number }>(`/api/experiences/${id}/complete`, {
       method: 'POST'
     });
-  } catch {
-    // Local offline completion counted
-    return { success: true, completedCount: 1 };
+    addCompletedId(id);
+    return res;
+  } catch (err: any) {
+    // Only count as offline success if genuinely offline / network error
+    if (err?.message === 'OFFLINE') {
+      addCompletedId(id);
+      return { success: true, completedCount: 1 };
+    }
+    throw err;
   }
 }
 
 export async function toggleSaveExperience(id: string): Promise<{ saved: boolean }> {
-  const localSaved = toggleLocalSaved(id);
+  const currentSaved = getSavedIds().includes(id);
+  const targetState = !currentSaved;
   try {
     const res = await request<{ saved: boolean }>(`/api/experiences/${id}/save`, {
       method: 'POST',
-      body: JSON.stringify({ targetState: localSaved })
+      body: JSON.stringify({ targetState })
     });
+    toggleLocalSaved(id);
     return res;
-  } catch {
-    return { saved: localSaved };
+  } catch (err: any) {
+    if (err?.message === 'OFFLINE') {
+      toggleLocalSaved(id);
+      return { saved: targetState };
+    }
+    throw err;
   }
 }
 

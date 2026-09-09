@@ -158,7 +158,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
       setIsSaved(res.saved);
       playPop();
     } catch {
-      setIsSaved(!isSaved);
+      // keep current isSaved state on real error
     } finally {
       setSaving(false);
     }
