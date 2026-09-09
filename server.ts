@@ -318,18 +318,34 @@ app.post('/api/experiences/:id/save', (req, res) => {
   const session = getOrCreateSession(req);
   const saves = sessionSaves.get(session.sessionId) || new Set<string>();
 
-  const isSaved = saves.has(exp.id);
-  if (isSaved) {
-    saves.delete(exp.id);
+  const targetState = req.body?.targetState;
+  let isSavedNow: boolean;
+
+  if (typeof targetState === 'boolean') {
+    if (targetState) {
+      saves.add(exp.id);
+      isSavedNow = true;
+    } else {
+      saves.delete(exp.id);
+      isSavedNow = false;
+    }
   } else {
-    saves.add(exp.id);
+    const isSaved = saves.has(exp.id);
+    if (isSaved) {
+      saves.delete(exp.id);
+      isSavedNow = false;
+    } else {
+      saves.add(exp.id);
+      isSavedNow = true;
+    }
   }
+
   sessionSaves.set(session.sessionId, saves);
 
-  analyticsEvents.push({ eventType: 'experience_saved', timestamp: new Date().toISOString() });
+  analyticsEvents.push({ eventType: isSavedNow ? 'experience_saved' : 'experience_unsaved', timestamp: new Date().toISOString() });
 
   res.json({
-    saved: !isSaved,
+    saved: isSavedNow,
     savedIds: Array.from(saves)
   });
 });
@@ -342,6 +358,15 @@ app.get('/api/saved', (req, res) => {
     .map((id) => experiences.get(id))
     .filter((e): e is Experience => !!e && e.active);
   res.json({ savedExperiences: savedList });
+});
+
+// Clear session profile data (saves & completions)
+app.post('/api/session/clear', (req, res) => {
+  const session = getOrCreateSession(req);
+  sessionSaves.delete(session.sessionId);
+  sessionCompletions.delete(session.sessionId);
+  session.completedCount = 0;
+  res.json({ success: true });
 });
 
 // ----------------------------------------------------
@@ -540,9 +565,16 @@ const DAILY_PROMPTS = [
 ];
 
 app.get('/api/daily', (req, res) => {
-  const now = new Date();
-  const dateKey = now.toISOString().slice(0, 10); // YYYY-MM-DD
-  const dayIndex = Math.floor(now.getTime() / (1000 * 60 * 60 * 24)) % DAILY_PROMPTS.length;
+  const clientDate = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : (typeof req.headers['x-client-date'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.headers['x-client-date'] as string)
+        ? (req.headers['x-client-date'] as string)
+        : new Date().toISOString().slice(0, 10));
+
+  const dateKey = clientDate;
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const epochDay = Math.floor(Date.UTC(y, m - 1, d) / (1000 * 60 * 60 * 24));
+  const dayIndex = Math.abs(epochDay) % DAILY_PROMPTS.length;
   const promptConfig = DAILY_PROMPTS[dayIndex];
 
   let moment = dailyMoments.get(dateKey);
@@ -575,8 +607,12 @@ app.post('/api/daily/submit', rateLimiter(10, 60000), (req, res) => {
     return res.status(400).json({ error: 'Submission cannot be empty.' });
   }
 
+  const clientDate = typeof req.headers['x-client-date'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.headers['x-client-date'] as string)
+    ? (req.headers['x-client-date'] as string)
+    : new Date().toISOString().slice(0, 10);
+
   const safeContent = content.trim().slice(0, 280);
-  const todayKey = dateKey || new Date().toISOString().slice(0, 10);
+  const todayKey = dateKey && /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : clientDate;
 
   const sub: DailySubmission = {
     id: 'daily_' + crypto.randomUUID().slice(0, 12),
@@ -598,12 +634,14 @@ app.post('/api/daily/submit', rateLimiter(10, 60000), (req, res) => {
 
 app.post('/api/daily/react/:id', (req, res) => {
   const { id } = req.params;
-  const todayKey = new Date().toISOString().slice(0, 10);
-  const list = dailySubmissions.get(todayKey) || [];
-  const sub = list.find((s) => s.id === id);
-  if (sub) {
-    sub.reactions = (sub.reactions || 0) + 1;
-    return res.json({ success: true, reactions: sub.reactions });
+  const { dateKey } = req.body || {};
+  if (dateKey && dailySubmissions.has(dateKey)) {
+    const list = dailySubmissions.get(dateKey)!;
+    const sub = list.find((s) => s.id === id);
+    if (sub) {
+      sub.reactions = (sub.reactions || 0) + 1;
+      return res.json({ success: true, reactions: sub.reactions });
+    }
   }
   for (const dayList of dailySubmissions.values()) {
     const s = dayList.find((item) => item.id === id);
@@ -612,7 +650,7 @@ app.post('/api/daily/react/:id', (req, res) => {
       return res.json({ success: true, reactions: s.reactions });
     }
   }
-  res.json({ success: true, reactions: 1 });
+  return res.status(404).json({ error: 'Submission not found.' });
 });
 
 

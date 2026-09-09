@@ -15,7 +15,8 @@ import {
   cacheExperiences,
   addCompletedId,
   toggleLocalSaved,
-  getSavedIds
+  getSavedIds,
+  clearLocalData
 } from './storage.ts';
 
 const BASE_URL = '';
@@ -71,7 +72,17 @@ export async function getExperiences(params?: {
     if (params?.mood) query.set('mood', params.mood);
 
     const data = await request<{ experiences: Experience[] }>(`/api/experiences?${query.toString()}`);
-    cacheExperiences(data.experiences);
+    
+    // Only cache when fetching unfiltered full catalog
+    const isUnfiltered =
+      (!params?.category || params.category === 'ALL') &&
+      !params?.maxDuration &&
+      !params?.search &&
+      !params?.mood;
+    if (isUnfiltered) {
+      cacheExperiences(data.experiences);
+    }
+    
     return data.experiences;
   } catch (err: unknown) {
     if ((err as Error).message === 'OFFLINE') {
@@ -96,8 +107,16 @@ export async function getExperiences(params?: {
         list = list.filter((e) => e.durationSeconds <= params.maxDuration!);
       }
       if (params?.search) {
-        const q = params.search.toLowerCase();
-        list = list.filter((e) => e.title.toLowerCase().includes(q) || e.prompt.toLowerCase().includes(q));
+        const q = params.search.trim().toLowerCase();
+        if (q.length > 0) {
+          list = list.filter(
+            (e) =>
+              e.title.toLowerCase().includes(q) ||
+              e.prompt.toLowerCase().includes(q) ||
+              e.moodTags.some((tag) => tag.toLowerCase().includes(q)) ||
+              e.category.toLowerCase().includes(q)
+          );
+        }
       }
       return list;
     }
@@ -128,8 +147,40 @@ export async function getRandomExperience(options?: {
     });
   } catch (err: unknown) {
     if ((err as Error).message === 'OFFLINE') {
-      const offlineList = getOfflineSeedExperiences();
-      return offlineList[Math.floor(Math.random() * offlineList.length)];
+      let pool = getOfflineSeedExperiences().filter((e) => e.active);
+      if (options?.intention) {
+        switch (options.intention) {
+          case 'LAUGH':
+            pool = pool.filter((e) => e.category === 'FUNNY' || e.moodTags.includes('laugh'));
+            break;
+          case 'DO':
+            pool = pool.filter((e) => e.category === 'MICRO-MISSION');
+            break;
+          case 'PEOPLE':
+            pool = pool.filter((e) => e.category === 'SOCIAL-PRESENCE');
+            break;
+          case 'HEAD':
+            pool = pool.filter((e) => e.category === 'QUIET');
+            break;
+          case 'SURPRISE':
+            pool = pool.filter((e) => e.category === 'SURPRISE');
+            break;
+          case 'COMPANY':
+            pool = pool.filter((e) => e.category === 'FRIEND' || e.category === 'SOCIAL-PRESENCE');
+            break;
+        }
+      } else if (options?.category && options.category !== 'ALL') {
+        const cat = options.category.toUpperCase();
+        if (cat === 'COMPANY' || cat === 'FRIEND') {
+          pool = pool.filter((e) => e.category === 'FRIEND' || e.category === 'SOCIAL-PRESENCE');
+        } else {
+          pool = pool.filter((e) => e.category.toUpperCase() === cat);
+        }
+      }
+      if (pool.length === 0) {
+        pool = getOfflineSeedExperiences().filter((e) => e.active);
+      }
+      return pool[Math.floor(Math.random() * pool.length)];
     }
     throw err;
   }
@@ -151,7 +202,8 @@ export async function toggleSaveExperience(id: string): Promise<{ saved: boolean
   const localSaved = toggleLocalSaved(id);
   try {
     const res = await request<{ saved: boolean }>(`/api/experiences/${id}/save`, {
-      method: 'POST'
+      method: 'POST',
+      body: JSON.stringify({ targetState: localSaved })
     });
     return res;
   } catch {
@@ -159,12 +211,29 @@ export async function toggleSaveExperience(id: string): Promise<{ saved: boolean
   }
 }
 
+export async function clearProfileData(): Promise<void> {
+  clearLocalData();
+  try {
+    await request<{ success: boolean }>('/api/session/clear', { method: 'POST' });
+  } catch {
+    // offline
+  }
+}
+
 export async function getSavedExperiences(): Promise<Experience[]> {
+  const localSavedIds = getSavedIds();
+  if (localSavedIds.length === 0) {
+    try {
+      await request<{ success: boolean }>('/api/session/clear', { method: 'POST' });
+    } catch {}
+    return [];
+  }
   try {
     const res = await request<{ savedExperiences: Experience[] }>('/api/saved');
-    return res.savedExperiences;
+    const savedSet = new Set(localSavedIds);
+    return res.savedExperiences.filter((e) => savedSet.has(e.id));
   } catch {
-    const savedIds = new Set(getSavedIds());
+    const savedIds = new Set(localSavedIds);
     return getOfflineSeedExperiences().filter((e) => savedIds.has(e.id));
   }
 }
@@ -210,21 +279,37 @@ export async function getCrowdSubmissions(): Promise<CrowdSubmission[]> {
   return res.submissions;
 }
 
-// Daily Moment
-export async function getDailyMoment(): Promise<{ moment: DailyMoment; submissions: DailySubmission[] }> {
-  return await request<{ moment: DailyMoment; submissions: DailySubmission[] }>('/api/daily');
+export function getLocalCalendarDateKey(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
-export async function submitDailyResponse(content: string): Promise<{ success: boolean }> {
-  return await request<{ success: boolean }>('/api/daily/submit', {
-    method: 'POST',
-    body: JSON.stringify({ content })
+// Daily Moment
+export async function getDailyMoment(dateKey?: string): Promise<{ moment: DailyMoment; submissions: DailySubmission[] }> {
+  const key = dateKey || getLocalCalendarDateKey();
+  return await request<{ moment: DailyMoment; submissions: DailySubmission[] }>(`/api/daily?date=${key}`, {
+    headers: { 'x-client-date': key }
   });
 }
 
-export async function reactToDailySubmission(id: string): Promise<{ success: boolean; reactions: number }> {
+export async function submitDailyResponse(content: string, dateKey?: string): Promise<{ success: boolean }> {
+  const key = dateKey || getLocalCalendarDateKey();
+  return await request<{ success: boolean }>('/api/daily/submit', {
+    method: 'POST',
+    headers: { 'x-client-date': key },
+    body: JSON.stringify({ content, dateKey: key })
+  });
+}
+
+export async function reactToDailySubmission(id: string, dateKey?: string): Promise<{ success: boolean; reactions: number }> {
+  const key = dateKey || getLocalCalendarDateKey();
   return await request<{ success: boolean; reactions: number }>(`/api/daily/react/${id}`, {
-    method: 'POST'
+    method: 'POST',
+    headers: { 'x-client-date': key },
+    body: JSON.stringify({ dateKey: key })
   });
 }
 

@@ -98,22 +98,16 @@ export function setMotionPreference(motion: 'normal' | 'reduced'): void {
 }
 
 export function getOfflineSeedExperiences(): Experience[] {
-  if (typeof window === 'undefined') return SEED_EXPERIENCES;
-  try {
-    const cached = localStorage.getItem(CACHED_EXPERIENCES_KEY);
-    if (cached) {
-      return JSON.parse(cached);
-    }
-  } catch {
-    // fallback
-  }
+  // Always return the complete canonical seed dataset (all 105 experiences)
   return SEED_EXPERIENCES;
 }
 
 export function cacheExperiences(experiences: Experience[]): void {
-  if (typeof window === 'undefined' || !experiences?.length) return;
+  // Only cache if the complete canonical catalog is present (>= 105 experiences).
+  // Filtered or search query results must never replace the canonical offline dataset.
+  if (typeof window === 'undefined' || !experiences?.length || experiences.length < SEED_EXPERIENCES.length) return;
   try {
-    localStorage.setItem(CACHED_EXPERIENCES_KEY, JSON.stringify(experiences.slice(0, 50)));
+    localStorage.setItem(CACHED_EXPERIENCES_KEY, JSON.stringify(experiences));
   } catch {
     // Ignore quota errors
   }

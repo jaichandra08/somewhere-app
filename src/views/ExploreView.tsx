@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Clock, Sparkles, Filter, X, Bookmark } from 'lucide-react';
 import { getExperiences, toggleSaveExperience } from '../lib/api.ts';
 import { getSavedIds } from '../lib/storage.ts';
@@ -20,6 +20,7 @@ const CATEGORIES: Array<{ id: string; label: string }> = [
   { id: 'SOCIAL-PRESENCE', label: 'Crowd' },
   { id: 'DECISION', label: 'Decisions' },
   { id: 'REFLECTION', label: 'Reflection' },
+  { id: 'CURIOUS', label: 'Curious' },
   { id: 'COMPANY', label: 'Company' },
   { id: 'SURPRISE', label: 'Surprise' }
 ];
@@ -38,30 +39,36 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [selectedDuration, setSelectedDuration] = useState<number | undefined>(undefined);
+  const requestIdRef = useRef(0);
+
+  const performFetch = useCallback(
+    async (category: string, duration: number | undefined, queryStr: string) => {
+      const thisRequestId = ++requestIdRef.current;
+      setLoading(true);
+      try {
+        const list = await getExperiences({
+          category,
+          maxDuration: duration,
+          search: queryStr.trim() || undefined
+        });
+        if (requestIdRef.current === thisRequestId) {
+          setExperiences(list);
+          setLoading(false);
+        }
+      } catch {
+        if (requestIdRef.current === thisRequestId) {
+          setExperiences([]);
+          setLoading(false);
+        }
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     setSavedIds(getSavedIds());
+    performFetch(selectedCategory, selectedDuration, search);
   }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [selectedCategory, selectedDuration]);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const list = await getExperiences({
-        category: selectedCategory,
-        maxDuration: selectedDuration,
-        search: search.trim() || undefined
-      });
-      setExperiences(list);
-    } catch {
-      // handled
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleToggleSaveCard = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -78,7 +85,24 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    loadData();
+    performFetch(selectedCategory, selectedDuration, search);
+  };
+
+  const handleClearSearch = () => {
+    setSearch('');
+    performFetch(selectedCategory, selectedDuration, '');
+  };
+
+  const handleCategoryChange = (catId: string) => {
+    playTap();
+    setSelectedCategory(catId);
+    performFetch(catId, selectedDuration, search);
+  };
+
+  const handleDurationChange = (maxSec: number | undefined) => {
+    playTap();
+    setSelectedDuration(maxSec);
+    performFetch(selectedCategory, maxSec, search);
   };
 
   const handleResetFilters = () => {
@@ -86,6 +110,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
     setSearch('');
     setSelectedCategory('ALL');
     setSelectedDuration(undefined);
+    performFetch('ALL', undefined, '');
   };
 
   return (
@@ -114,11 +139,8 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
         {search && (
           <button
             type="button"
-            onClick={() => {
-              setSearch('');
-              loadData();
-            }}
-            className="absolute right-12 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-700"
+            onClick={handleClearSearch}
+            className="absolute right-12 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -126,7 +148,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
         <button
           id="explore-search-submit-btn"
           type="submit"
-          className="absolute right-2 top-1/2 -translate-y-1/2 py-1.5 px-3 rounded-xl bg-stone-900 dark:bg-stone-100 text-stone-50 dark:text-stone-900 text-xs font-semibold"
+          className="absolute right-2 top-1/2 -translate-y-1/2 py-1.5 px-3 rounded-xl bg-stone-900 dark:bg-stone-100 text-stone-50 dark:text-stone-900 text-xs font-semibold cursor-pointer"
         >
           Go
         </button>
@@ -139,10 +161,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
             key={cat.id}
             id={`category-chip-${cat.id.toLowerCase()}`}
             type="button"
-            onClick={() => {
-              playTap();
-              setSelectedCategory(cat.id);
-            }}
+            onClick={() => handleCategoryChange(cat.id)}
             className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
               selectedCategory === cat.id
                 ? 'bg-stone-900 text-stone-50 dark:bg-stone-100 dark:text-stone-900 font-semibold'
@@ -164,10 +183,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
             key={i}
             id={`duration-filter-${i}`}
             type="button"
-            onClick={() => {
-              playTap();
-              setSelectedDuration(d.maxSec);
-            }}
+            onClick={() => handleDurationChange(d.maxSec)}
             className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
               selectedDuration === d.maxSec
                 ? 'bg-stone-200 dark:bg-stone-700 text-stone-900 dark:text-stone-100 font-bold'

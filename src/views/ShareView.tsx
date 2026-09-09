@@ -99,6 +99,11 @@ export const ShareView: React.FC<ShareViewProps> = ({ token, onNavigate, onSelec
           onNavigate('/explore');
         }}
         onNavigate={onNavigate}
+        onComplete={() => {
+          if (token) {
+            completeSharedExperience(token).catch(() => {});
+          }
+        }}
       />
     </div>
   );

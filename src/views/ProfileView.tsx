@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bookmark, CheckCircle2, Download, Trash2, Play, Sparkles } from 'lucide-react';
-import { getSavedExperiences, toggleSaveExperience } from '../lib/api.ts';
-import { getCompletedIds, getSavedIds, clearLocalData } from '../lib/storage.ts';
+import { getSavedExperiences, toggleSaveExperience, clearProfileData } from '../lib/api.ts';
+import { getCompletedIds, getSavedIds } from '../lib/storage.ts';
 import { Experience } from '../types.ts';
 import { playTap, playPop } from '../lib/sound.ts';
 
@@ -61,12 +61,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onSelectExperience, on
     URL.revokeObjectURL(url);
   };
 
-  const handleClearHistory = () => {
+  const handleClearHistory = async () => {
     playTap();
-    clearLocalData();
     setSavedList([]);
     setCompletedCount(0);
     setConfirmClear(false);
+    await clearProfileData();
   };
 
   return (

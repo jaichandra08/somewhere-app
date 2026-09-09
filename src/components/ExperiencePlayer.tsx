@@ -26,18 +26,21 @@ interface ExperiencePlayerProps {
   experience: Experience;
   onDoAnother: () => void;
   onNavigate?: (path: string) => void;
+  onComplete?: () => void;
 }
 
 export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
   experience,
   onDoAnother,
-  onNavigate
+  onNavigate,
+  onComplete
 }) => {
   const [completed, setCompleted] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  const completedRef = useRef(false);
 
   // Completion inputs state
   const [textInput, setTextInput] = useState('');
@@ -54,6 +57,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
 
   useEffect(() => {
     // Reset state on new experience
+    completedRef.current = false;
     setCompleted(false);
     setTextInput('');
     setSelectedChoice(null);
@@ -93,7 +97,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
     }, 200);
 
     return () => clearInterval(interval);
-  }, [timerRunning, timeLeft]);
+  }, [timerRunning]);
 
   const handleStartTimer = () => {
     playTap();
@@ -127,13 +131,22 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
   const isTextCompleteValid = isSevenWords ? wordCount === 7 : textInput.trim().length > 0;
 
   const handleFinishCompletion = async () => {
+    if (completedRef.current) return;
     if (isSevenWords && wordCount !== 7) return;
+    completedRef.current = true;
     playSuccess();
     setCompleted(true);
     try {
       await completeExperience(experience.id);
     } catch {
       // offline fallback
+    }
+    if (onComplete) {
+      try {
+        onComplete();
+      } catch {
+        // ignore
+      }
     }
   };
 
