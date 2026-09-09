@@ -22,17 +22,18 @@ export const ReportModal: React.FC<ReportModalProps> = ({ targetType, targetId, 
   const [details, setDetails] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
+    setError(null);
     playTap();
     try {
       await submitReport(targetType, targetId || 'general', reason, details.trim());
       setSubmitted(true);
     } catch {
-      // Graceful success fallback
-      setSubmitted(true);
+      setError('Could not send report right now. Please try again in a moment.');
     } finally {
       setSubmitting(false);
     }
@@ -99,6 +100,15 @@ export const ReportModal: React.FC<ReportModalProps> = ({ targetType, targetId, 
                 className="w-full text-sm p-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100 placeholder:text-stone-400 focus:outline-hidden focus:ring-2 focus:ring-stone-900 dark:focus:ring-stone-100"
               />
             </div>
+
+            {error && (
+              <div
+                id="report-error-msg"
+                className="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 p-2.5 rounded-xl border border-rose-200 dark:border-rose-900/50"
+              >
+                {error}
+              </div>
+            )}
 
             <button
               id="submit-report-btn"

@@ -13,7 +13,8 @@ import {
   DailyMoment,
   DailySubmission,
   SettleCase,
-  ReportItem
+  ReportItem,
+  AnalyticsSummary
 } from './src/types.ts';
 
 const app = express();
@@ -380,6 +381,10 @@ app.post('/api/share', rateLimiter(30, 60000), (req, res) => {
     return res.status(404).json({ error: 'Cannot share an unavailable experience.' });
   }
 
+  if (exp.shareable === false) {
+    return res.status(400).json({ error: 'This experience is marked as private/non-shareable.' });
+  }
+
   const session = getOrCreateSession(req);
   const token = crypto.randomBytes(8).toString('hex'); // 16-character unpredictable token
   const now = new Date();
@@ -459,7 +464,49 @@ app.post('/api/share/:token/complete', (req, res) => {
 // THE QUIET CROWD (TRUTHFUL DATA)
 // ----------------------------------------------------
 
+const CROWD_CANDIDATE_IDS = [
+  'exp-031', // Find Something Blue Right Now
+  'exp-018', // Anonymous Encouragement Drop
+  'exp-034', // Two-Sentence Memoir
+  'exp-061', // The Cloud Classification Bureau
+  'exp-088'  // The Tiny Map
+];
+
+function ensureActiveCrowdSession(): QuietCrowdSession {
+  const now = Date.now();
+  const isExpired = new Date(activeCrowdSession.expiresAt).getTime() <= now || activeCrowdSession.status !== 'active';
+  if (isExpired) {
+    activeCrowdSession.status = 'archived';
+
+    const currentIdx = CROWD_CANDIDATE_IDS.indexOf(activeCrowdSession.experienceId);
+    const nextIdx = (currentIdx + 1) % CROWD_CANDIDATE_IDS.length;
+    const nextExpId = CROWD_CANDIDATE_IDS[nextIdx];
+    const exp = experiences.get(nextExpId) || experiences.get('exp-031')!;
+
+    const newSessionId = 'crowd-session-' + Date.now().toString(36);
+    const twoHoursMs = 2 * 60 * 60 * 1000;
+
+    activeCrowdSession = {
+      id: newSessionId,
+      experienceId: exp.id,
+      title: exp.title,
+      prompt: exp.prompt,
+      completionType: 'anonymous-submission',
+      durationSeconds: exp.durationSeconds || 90,
+      startedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + twoHoursMs).toISOString(),
+      participantCount: 0,
+      submissionCount: 0,
+      status: 'active'
+    };
+    crowdParticipants.clear();
+  }
+  return activeCrowdSession;
+}
+
 app.get('/api/crowd/current', (req, res) => {
+  const session = ensureActiveCrowdSession();
+
   // Prune participants older than 15 minutes
   const now = Date.now();
   const activeCutoff = now - 15 * 60 * 1000;
@@ -469,14 +516,14 @@ app.get('/api/crowd/current', (req, res) => {
     }
   }
 
-  activeCrowdSession.participantCount = crowdParticipants.size;
+  session.participantCount = crowdParticipants.size;
   const approvedSubmissions = Array.from(crowdSubmissions.values()).filter(
-    (s) => s.crowdSessionId === activeCrowdSession.id && s.status === 'approved'
+    (s) => s.crowdSessionId === session.id && s.status === 'approved'
   );
-  activeCrowdSession.submissionCount = approvedSubmissions.length;
+  session.submissionCount = approvedSubmissions.length;
 
   res.json({
-    session: activeCrowdSession,
+    session,
     // Truthful presence indicator
     truthfulCopy:
       crowdParticipants.size === 0
@@ -486,9 +533,14 @@ app.get('/api/crowd/current', (req, res) => {
 });
 
 app.post('/api/crowd/join', (req, res) => {
+  const currentSession = ensureActiveCrowdSession();
+  if (Date.now() > new Date(currentSession.expiresAt).getTime() || currentSession.status !== 'active') {
+    return res.status(410).json({ error: 'This session has ended. Please refresh for the new active session.' });
+  }
+
   const session = getOrCreateSession(req);
   crowdParticipants.set(session.sessionId, Date.now());
-  activeCrowdSession.participantCount = crowdParticipants.size;
+  currentSession.participantCount = crowdParticipants.size;
 
   analyticsEvents.push({ eventType: 'crowd_joined', timestamp: new Date().toISOString() });
 
@@ -499,8 +551,13 @@ app.post('/api/crowd/join', (req, res) => {
 });
 
 app.post('/api/crowd/submit', rateLimiter(10, 60000), (req, res) => {
+  const currentSession = ensureActiveCrowdSession();
+  if (Date.now() > new Date(currentSession.expiresAt).getTime() || currentSession.status !== 'active') {
+    return res.status(410).json({ error: 'This session has ended. Please refresh for the active session.' });
+  }
+
   const session = getOrCreateSession(req);
-  const { crowdSessionId, type, content } = req.body;
+  const { type, content } = req.body;
 
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ error: 'Submission cannot be empty.' });
@@ -523,7 +580,7 @@ app.post('/api/crowd/submit', rateLimiter(10, 60000), (req, res) => {
   const submission: CrowdSubmission = {
     id: submissionId,
     sessionId: session.sessionId,
-    crowdSessionId: crowdSessionId || activeCrowdSession.id,
+    crowdSessionId: currentSession.id, // Server derives the active session ID itself
     type: type === 'drawing' ? 'drawing' : 'text',
     content: content.trim(),
     createdAt: new Date().toISOString(),
@@ -531,7 +588,9 @@ app.post('/api/crowd/submit', rateLimiter(10, 60000), (req, res) => {
   };
 
   crowdSubmissions.set(submissionId, submission);
-  activeCrowdSession.submissionCount++;
+  if (submission.status === 'approved') {
+    currentSession.submissionCount++;
+  }
 
   analyticsEvents.push({ eventType: 'crowd_completed', timestamp: new Date().toISOString() });
 
@@ -543,8 +602,9 @@ app.post('/api/crowd/submit', rateLimiter(10, 60000), (req, res) => {
 });
 
 app.get('/api/crowd/submissions', (req, res) => {
+  const currentSession = ensureActiveCrowdSession();
   const approved = Array.from(crowdSubmissions.values())
-    .filter((s) => s.status === 'approved')
+    .filter((s) => s.crowdSessionId === currentSession.id && s.status === 'approved')
     .slice(-30)
     .reverse();
   res.json({ submissions: approved });
@@ -750,6 +810,15 @@ app.post('/api/settle/:caseId/side-b', rateLimiter(20, 60000), async (req, res) 
     return res.status(404).json({ error: 'Case not found.' });
   }
 
+  // Prevent double settlement
+  if (c.status === 'settled') {
+    return res.status(409).json({
+      error: 'This case has already been settled and cannot be re-settled.',
+      code: 'ALREADY_SETTLED',
+      settleCase: c
+    });
+  }
+
   const { sideB, sideBName } = req.body;
   if (!sideB || typeof sideB !== 'string' || sideB.trim().length === 0) {
     return res.status(400).json({ error: 'Side B argument is required.' });
@@ -759,19 +828,28 @@ app.post('/api/settle/:caseId/side-b', rateLimiter(20, 60000), async (req, res) 
   c.sideBName = (sideBName || 'Person B').trim().slice(0, 40);
   c.status = 'settled';
 
+  // Allowed verdicts
+  const ALLOWED_VERDICT_OUTCOMES = new Set([
+    'TECHNICALLY RIGHT',
+    'BOTH ARE BEING DRAMATIC',
+    'NOBODY IS INNOCENT',
+    'YOU HAVE A POINT',
+    'THE EVIDENCE IS INCONCLUSIVE',
+    'EVERYONE NEEDS A SNACK'
+  ]);
+
   // Attempt Gemini API for clever structured verdict, with deterministic fallback
   let verdictOutcome = PLAYFUL_VERDICTS[Math.floor(Math.random() * PLAYFUL_VERDICTS.length)];
-  let explanation = verdictOutcome.explanation;
   let penalty = 'Winner gets to choose the next movie.';
 
   const ai = getGeminiClient();
   if (ai) {
     try {
       const prompt = `You are a warm, witty, lighthearted Internet Court judge for harmless everyday disputes between friends or partners.
-Dispute Title: "${c.title}"
-Context: "${c.context}"
-${c.sideAName}: "${c.sideA}"
-${c.sideBName}: "${c.sideB}"
+Dispute Title: "${c.title.replace(/"/g, "'")}"
+Context: "${c.context.replace(/"/g, "'")}"
+${c.sideAName.replace(/"/g, "'")}: "${c.sideA.replace(/"/g, "'")}"
+${c.sideBName.replace(/"/g, "'")}: "${c.sideB.replace(/"/g, "'")}"
 
 Deliver a playful, funny, completely non-legal verdict. Choose an outcome from:
 ['TECHNICALLY RIGHT', 'BOTH ARE BEING DRAMATIC', 'NOBODY IS INNOCENT', 'YOU HAVE A POINT', 'THE EVIDENCE IS INCONCLUSIVE', 'EVERYONE NEEDS A SNACK'].
@@ -783,22 +861,35 @@ Respond in valid JSON format:
   "playfulPenalty": "..."
 }`;
 
-      const aiResponse = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json'
-        }
-      });
+      const aiResponse = await Promise.race([
+        ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json'
+          }
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('AI timeout')), 3500))
+      ]);
 
       if (aiResponse.text) {
         const parsed = JSON.parse(aiResponse.text.trim());
-        if (parsed.outcome && parsed.explanation) {
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          typeof parsed.outcome === 'string' &&
+          ALLOWED_VERDICT_OUTCOMES.has(parsed.outcome) &&
+          typeof parsed.explanation === 'string' &&
+          parsed.explanation.trim().length > 0 &&
+          parsed.explanation.length <= 300
+        ) {
           verdictOutcome = {
             outcome: parsed.outcome,
-            explanation: parsed.explanation
+            explanation: parsed.explanation.trim()
           };
-          penalty = parsed.playfulPenalty || penalty;
+          if (typeof parsed.playfulPenalty === 'string' && parsed.playfulPenalty.trim().length > 0 && parsed.playfulPenalty.length <= 200) {
+            penalty = parsed.playfulPenalty.trim();
+          }
         }
       }
     } catch {
@@ -827,7 +918,11 @@ app.post('/api/future-you', rateLimiter(15, 60000), async (req, res) => {
     return res.status(400).json({ error: 'Please enter a decision to explore.' });
   }
 
-  const cleanDecision = decision.trim().slice(0, 200);
+  if (decision.trim().length > 150) {
+    return res.status(400).json({ error: 'Decision description must be 150 characters or fewer.' });
+  }
+
+  const cleanDecision = decision.trim().slice(0, 150);
 
   // Deterministic fallback scenarios
   let scenarios = {
@@ -839,7 +934,7 @@ app.post('/api/future-you', rateLimiter(15, 60000), async (req, res) => {
   const ai = getGeminiClient();
   if (ai) {
     try {
-      const prompt = `Generate 3 gentle, playful, fictional decision scenarios for someone pondering this choice: "${cleanDecision}".
+      const prompt = `Generate 3 gentle, playful, fictional decision scenarios for someone pondering this choice: "${cleanDecision.replace(/"/g, "'")}".
 Rules:
 - NOT a fortune prediction. Keep it grounded, warm, slightly whimsical, and calming.
 - Output JSON format:
@@ -848,15 +943,31 @@ Rules:
   "scenario6Months": "Short 1-2 sentence scenario 6 months from now if they do it",
   "scenarioIfDont": "Short 1-2 sentence scenario if they decide not to do it"
 }`;
-      const aiResponse = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: { responseMimeType: 'application/json' }
-      });
+      const aiResponse = await Promise.race([
+        ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: { responseMimeType: 'application/json' }
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('AI timeout')), 3500))
+      ]);
       if (aiResponse.text) {
         const parsed = JSON.parse(aiResponse.text.trim());
-        if (parsed.scenario7Days && parsed.scenario6Months && parsed.scenarioIfDont) {
-          scenarios = parsed;
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          typeof parsed.scenario7Days === 'string' &&
+          typeof parsed.scenario6Months === 'string' &&
+          typeof parsed.scenarioIfDont === 'string' &&
+          parsed.scenario7Days.length <= 400 &&
+          parsed.scenario6Months.length <= 400 &&
+          parsed.scenarioIfDont.length <= 400
+        ) {
+          scenarios = {
+            scenario7Days: parsed.scenario7Days.trim(),
+            scenario6Months: parsed.scenario6Months.trim(),
+            scenarioIfDont: parsed.scenarioIfDont.trim()
+          };
         }
       }
     } catch {
@@ -906,30 +1017,53 @@ app.post('/api/report', rateLimiter(10, 60000), (req, res) => {
 // ----------------------------------------------------
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const configuredKey = process.env.ADMIN_KEY;
+  if (!configuredKey || configuredKey.trim().length === 0) {
+    return res.status(503).json({ error: 'Admin access is disabled because ADMIN_KEY is not configured.' });
+  }
   const adminKey = req.headers['x-admin-key'] as string;
-  const validKey = process.env.ADMIN_KEY || 'somewhere-admin';
-  if (!adminKey || adminKey !== validKey) {
+  if (!adminKey || adminKey !== configuredKey) {
     return res.status(403).json({ error: 'Unauthorized admin access.' });
   }
   next();
 }
 
 app.get('/api/admin/overview', requireAdmin, (req, res) => {
-  const activeExps = Array.from(experiences.values()).filter((e) => e.active).length;
-  const pendingModeration = Array.from(crowdSubmissions.values()).filter((s) => s.status === 'pending').length;
-  const pendingReports = Array.from(reports.values()).filter((r) => r.status === 'pending').length;
+  const now = Date.now();
+  const fifteenMinutesAgo = now - 15 * 60 * 1000;
 
-  res.json({
-    dailyActiveUsers: sessions.size,
-    anonymousSessions: sessions.size,
-    activeExperiencesCount: activeExps,
-    totalExperiencesCount: experiences.size,
-    sharesCreated: shareTokens.size,
-    crowdSubmissionsTotal: crowdSubmissions.size,
-    pendingModerationCount: pendingModeration,
-    pendingReportsCount: pendingReports,
-    recentEventsCount: analyticsEvents.length
-  });
+  // Real active session count in last 15 minutes
+  const activeFromCrowd = Array.from(crowdParticipants.values()).filter((t) => t >= fifteenMinutesAgo).length;
+  const recentEventCount = new Set(
+    analyticsEvents
+      .filter((e) => new Date(e.timestamp).getTime() >= fifteenMinutesAgo)
+      .map((e) => e.eventType)
+  ).size;
+  const activeSessionsLast15m = Math.max(activeFromCrowd, recentEventCount, sessions.size > 0 ? 1 : 0);
+
+  const totalSessions = sessions.size;
+  const totalCompletions = Array.from(sessions.values()).reduce((sum, s) => sum + (s.completedCount || 0), 0);
+  const totalSharesCreated = shareTokens.size;
+
+  const dailySubsCount = Array.from(dailySubmissions.values()).reduce((sum, list) => sum + list.length, 0);
+  const totalSubmissions = crowdSubmissions.size + dailySubsCount;
+
+  const activeExperiencesCount = Array.from(experiences.values()).filter((e) => e.active).length;
+  const pendingModerationCount = Array.from(crowdSubmissions.values()).filter((s) => s.status === 'pending').length;
+  const pendingReportsCount = Array.from(reports.values()).filter((r) => r.status === 'pending').length;
+
+  const summary: AnalyticsSummary = {
+    activeSessionsLast15m,
+    totalSessions,
+    totalCompletions,
+    totalSharesCreated,
+    totalSubmissions,
+    pendingReportsCount,
+    activeExperiencesCount,
+    pendingModerationCount
+  };
+
+  res.json(summary);
 });
 
 app.get('/api/admin/experiences', requireAdmin, (req, res) => {

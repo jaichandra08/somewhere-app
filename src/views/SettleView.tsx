@@ -24,6 +24,7 @@ export const SettleView: React.FC<SettleViewProps> = ({ caseId, onNavigate }) =>
   const [sideBName, setSideBName] = useState('');
   const [sideB, setSideB] = useState('');
   const [submittingB, setSubmittingB] = useState(false);
+  const [sideBError, setSideBError] = useState<string | null>(null);
 
   const [copied, setCopied] = useState(false);
 
@@ -52,15 +53,21 @@ export const SettleView: React.FC<SettleViewProps> = ({ caseId, onNavigate }) =>
 
   const handleSubmitSideB = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!caseId || !sideB) return;
+    if (!caseId || !sideB.trim() || submittingB) return;
     setSubmittingB(true);
+    setSideBError(null);
     playTap();
     try {
       const settled = await submitSettleSideB(caseId, sideB, sideBName || 'Person B');
       setCurrentCase(settled);
       playSuccess();
-    } catch {
-      // error
+    } catch (err: any) {
+      if (err?.message?.includes('already') || err?.code === 'ALREADY_SETTLED') {
+        setSideBError('This dispute has already been settled.');
+        getSettleCase(caseId).then(setCurrentCase).catch(() => {});
+      } else {
+        setSideBError('Could not submit verdict right now. Please try again.');
+      }
     } finally {
       setSubmittingB(false);
     }
@@ -154,6 +161,12 @@ export const SettleView: React.FC<SettleViewProps> = ({ caseId, onNavigate }) =>
                 className="w-full text-sm p-3 rounded-xl border border-stone-200 dark:border-stone-700 bg-white dark:bg-stone-800 text-stone-900 dark:text-stone-100"
               />
             </div>
+
+            {sideBError && (
+              <div className="text-xs text-rose-600 dark:text-rose-400">
+                {sideBError}
+              </div>
+            )}
 
             <button
               id="submit-settle-side-b-btn"

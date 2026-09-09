@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Users, Clock, Send, Shield, Sparkles, Flag, Check } from 'lucide-react';
 import { getCrowdCurrent, joinCrowdSession, submitCrowdResponse, getCrowdSubmissions } from '../lib/api.ts';
 import { QuietCrowdSession, CrowdSubmission } from '../types.ts';
@@ -13,11 +13,18 @@ export const CrowdView: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const [joined, setJoined] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+
   const [submissionMode, setSubmissionMode] = useState<'text' | 'drawing'>('text');
   const [textContent, setTextContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState<'approved' | 'rejected' | null>(null);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+
   const [reportTargetId, setReportTargetId] = useState<string | null>(null);
+  const reqIdRef = useRef(0);
 
   useEffect(() => {
     loadCrowdData();
@@ -26,45 +33,62 @@ export const CrowdView: React.FC = () => {
   }, []);
 
   const loadCrowdData = async () => {
+    const currentReqId = ++reqIdRef.current;
     try {
-      const current = await getCrowdCurrent();
-      setSession(current.session);
-      setTruthfulCopy(current.truthfulCopy);
-
-      const subs = await getCrowdSubmissions();
-      setSubmissions(subs);
+      const [current, subs] = await Promise.all([
+        getCrowdCurrent(),
+        getCrowdSubmissions()
+      ]);
+      if (currentReqId === reqIdRef.current) {
+        setSession(current.session);
+        setTruthfulCopy(current.truthfulCopy);
+        setSubmissions(subs);
+      }
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      if (currentReqId === reqIdRef.current) {
+        setLoading(false);
+      }
     }
   };
 
   const handleJoin = async () => {
+    if (joining || joined) return;
+    setJoining(true);
+    setJoinError(null);
     playTap();
-    setJoined(true);
     try {
       await joinCrowdSession();
+      setJoined(true);
       loadCrowdData();
     } catch {
-      // ignore
+      setJoinError('Could not join the session right now. Please try again.');
+    } finally {
+      setJoining(false);
     }
   };
 
   const handleSubmit = async (contentToSubmit?: string) => {
     const finalContent = contentToSubmit || textContent.trim();
-    if (!finalContent) return;
+    if (!finalContent || submitting) return;
 
     setSubmitting(true);
+    setSubmissionError(null);
     playTap();
     try {
-      await submitCrowdResponse(submissionMode, finalContent);
-      playSuccess();
+      const res = await submitCrowdResponse(submissionMode, finalContent);
+      if (res && res.status === 'rejected') {
+        setSubmissionResult('rejected');
+      } else {
+        playSuccess();
+        setSubmissionResult('approved');
+      }
       setSubmitted(true);
       setTextContent('');
       loadCrowdData();
     } catch {
-      // error handled
+      setSubmissionError('Could not submit response. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -119,15 +143,23 @@ export const CrowdView: React.FC = () => {
           </div>
 
           {!joined && !submitted ? (
-            <button
-              id="join-crowd-btn"
-              type="button"
-              onClick={handleJoin}
-              className="py-3.5 px-6 rounded-2xl bg-stone-900 dark:bg-stone-100 text-stone-50 dark:text-stone-900 text-sm font-semibold flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition-all cursor-pointer"
-            >
-              <Users className="w-4 h-4" />
-              Join This Session
-            </button>
+            <div className="flex flex-col gap-2">
+              <button
+                id="join-crowd-btn"
+                type="button"
+                disabled={joining}
+                onClick={handleJoin}
+                className="py-3.5 px-6 rounded-2xl bg-stone-900 dark:bg-stone-100 text-stone-50 dark:text-stone-900 text-sm font-semibold flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition-all cursor-pointer disabled:opacity-60"
+              >
+                <Users className="w-4 h-4" />
+                {joining ? 'Joining...' : 'Join This Session'}
+              </button>
+              {joinError && (
+                <span className="text-xs text-rose-600 dark:text-rose-400 text-center">
+                  {joinError}
+                </span>
+              )}
+            </div>
           ) : !submitted ? (
             /* Submission Drawer */
             <div className="flex flex-col gap-4 pt-2 border-t border-stone-100 dark:border-stone-800">
@@ -184,6 +216,11 @@ export const CrowdView: React.FC = () => {
                     </span>
                     <span>{textContent.length}/280</span>
                   </div>
+                  {submissionError && (
+                    <span className="text-xs text-rose-600 dark:text-rose-400">
+                      {submissionError}
+                    </span>
+                  )}
                   <button
                     id="submit-crowd-text-btn"
                     type="button"
@@ -198,14 +235,25 @@ export const CrowdView: React.FC = () => {
               ) : (
                 <div className="flex flex-col gap-2">
                   <DrawingCanvas onComplete={(dataUrl) => handleSubmit(dataUrl)} disabled={submitting} />
+                  {submissionError && (
+                    <span className="text-xs text-rose-600 dark:text-rose-400 mt-1">
+                      {submissionError}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
-          ) : (
-            /* Done State */
+          ) : submissionResult === 'approved' ? (
+            /* Done State: Approved */
             <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-500/20 text-emerald-900 dark:text-emerald-200 flex items-center gap-3 text-xs">
               <Check className="w-5 h-5 text-emerald-600 shrink-0" />
               <span>You added to the pool. Your presence is recorded quietly with the crowd.</span>
+            </div>
+          ) : (
+            /* Done State: Reviewed / Not Added */
+            <div className="p-4 rounded-2xl bg-stone-100 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 text-stone-700 dark:text-stone-300 flex items-center gap-3 text-xs">
+              <Shield className="w-5 h-5 text-stone-500 shrink-0" />
+              <span>This response was reviewed and could not be added to the pool. Thank you for your presence.</span>
             </div>
           )}
         </div>

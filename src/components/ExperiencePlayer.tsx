@@ -548,18 +548,20 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
                 Do Another
               </button>
 
-              <button
-                id="send-company-btn"
-                type="button"
-                onClick={() => {
-                  playTap();
-                  setShowShareModal(true);
-                }}
-                className="flex-1 py-3.5 px-4 rounded-2xl border border-stone-300 dark:border-stone-700 text-stone-900 dark:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-800 text-sm font-semibold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
-              >
-                <Share2 className="w-4 h-4" />
-                Send a Little Company
-              </button>
+              {experience.shareable !== false && (
+                <button
+                  id="send-company-btn"
+                  type="button"
+                  onClick={() => {
+                    playTap();
+                    setShowShareModal(true);
+                  }}
+                  className="flex-1 py-3.5 px-4 rounded-2xl border border-stone-300 dark:border-stone-700 text-stone-900 dark:text-stone-100 hover:bg-stone-100 dark:hover:bg-stone-800 text-sm font-semibold flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Share2 className="w-4 h-4" />
+                  Send a Little Company
+                </button>
+              )}
             </div>
 
             <button

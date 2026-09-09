@@ -26,7 +26,7 @@ import { playTap, playSuccess } from '../lib/sound.ts';
 
 export const AdminView: React.FC = () => {
   const [adminKey, setAdminKey] = useState(
-    sessionStorage.getItem('somewhere_admin_key') || 'somewhere-admin'
+    sessionStorage.getItem('somewhere_admin_key') || ''
   );
   const [authenticated, setAuthenticated] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);

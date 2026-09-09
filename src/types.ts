@@ -148,15 +148,12 @@ export interface ReportItem {
 }
 
 export interface AnalyticsSummary {
-  dailyActiveUsers: number;
-  anonymousSessions: number;
-  experienceStarts: number;
-  experienceCompletions: number;
-  sharesCreated: number;
-  sharesOpened: number;
-  crowdParticipants: number;
-  dailyCompletions: number;
+  activeSessionsLast15m: number;
+  totalSessions: number;
+  totalCompletions: number;
+  totalSharesCreated: number;
+  totalSubmissions: number;
+  pendingReportsCount: number;
   activeExperiencesCount: number;
   pendingModerationCount: number;
-  pendingReportsCount: number;
 }
