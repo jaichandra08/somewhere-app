@@ -1,0 +1,7 @@
+{
+  "name": "SOMEWHERE™",
+  "description": "A place to go when you have nobody to go with. Micro-experiences, quiet shared presence, and playful moments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
