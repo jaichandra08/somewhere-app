@@ -38,6 +38,7 @@ SEED_EXPERIENCES.forEach((exp) => experiences.set(exp.id, { ...exp }));
 const sessions: Map<string, AnonymousSession> = new Map();
 const sessionCompletions: Map<string, Set<string>> = new Map();
 const sessionSaves: Map<string, Set<string>> = new Map();
+const sessionDailyReactions: Map<string, Set<string>> = new Map();
 
 const shareTokens: Map<string, ShareToken> = new Map();
 const shareAttributionChain: Map<string, string> = new Map(); // childToken -> parentToken
@@ -102,8 +103,12 @@ function rateLimiter(limit: number, windowMs: number) {
 // Session extraction helper
 function getOrCreateSession(req: Request): AnonymousSession {
   let sessionId = (req.headers['x-session-id'] as string) || '';
-  if (!sessionId || !sessions.has(sessionId)) {
-    sessionId = 'sess_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+  const validIdFormat = typeof sessionId === 'string' && /^[a-zA-Z0-9_-]{6,64}$/.test(sessionId);
+
+  if (!sessionId || !validIdFormat || !sessions.has(sessionId)) {
+    if (!validIdFormat) {
+      sessionId = 'sess_' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    }
     const newSession: AnonymousSession = {
       sessionId,
       firstSeenAt: new Date().toISOString(),
@@ -230,7 +235,7 @@ app.post('/api/experiences/random', (req, res) => {
     // Intention mapping from 6 homepage buttons:
     switch (intention) {
       case 'LAUGH':
-        pool = pool.filter((e) => e.category === 'FUNNY' || e.moodTags.includes('laugh'));
+        pool = pool.filter((e) => e.category === 'FUNNY');
         break;
       case 'DO':
         pool = pool.filter((e) => e.category === 'MICRO-MISSION');
@@ -366,6 +371,7 @@ app.post('/api/session/clear', (req, res) => {
   const session = getOrCreateSession(req);
   sessionSaves.delete(session.sessionId);
   sessionCompletions.delete(session.sessionId);
+  sessionDailyReactions.delete(session.sessionId);
   session.completedCount = 0;
   res.json({ success: true });
 });
@@ -433,7 +439,7 @@ app.get('/api/share/:token', (req, res) => {
   }
 
   const exp = experiences.get(tokenRecord.experienceId);
-  if (!exp || !exp.active) {
+  if (!exp || !exp.active || exp.shareable === false) {
     return res.status(404).json({
       error: 'That little thing wandered off.',
       code: 'EXPERIENCE_UNAVAILABLE'
@@ -462,14 +468,23 @@ app.post('/api/share/:token/complete', (req, res) => {
   }
 
   const exp = experiences.get(tokenRecord.experienceId);
-  if (!exp || !exp.active) {
+  if (!exp || !exp.active || exp.shareable === false) {
     return res.status(404).json({ error: 'That little thing wandered off.', code: 'EXPERIENCE_UNAVAILABLE' });
   }
 
-  tokenRecord.completedCount++;
-  analyticsEvents.push({ eventType: 'share_completed', timestamp: new Date().toISOString() });
+  const session = getOrCreateSession(req);
+  const completions = sessionCompletions.get(session.sessionId) || new Set<string>();
+  const isAlreadyCompleted = completions.has(exp.id);
 
-  res.json({ success: true, message: 'You completed it.' });
+  if (!isAlreadyCompleted) {
+    tokenRecord.completedCount++;
+    completions.add(exp.id);
+    sessionCompletions.set(session.sessionId, completions);
+    session.completedCount = completions.size;
+    analyticsEvents.push({ eventType: 'share_completed', timestamp: new Date().toISOString() });
+  }
+
+  res.json({ success: true, message: 'You completed it.', alreadyCompleted: isAlreadyCompleted });
 });
 
 // ----------------------------------------------------
@@ -710,24 +725,35 @@ app.post('/api/daily/submit', rateLimiter(10, 60000), (req, res) => {
 });
 
 app.post('/api/daily/react/:id', (req, res) => {
+  const session = getOrCreateSession(req);
   const { id } = req.params;
+  const userReactions = sessionDailyReactions.get(session.sessionId) || new Set<string>();
+
+  let sub: DailySubmission | undefined;
   const { dateKey } = req.body || {};
-  if (dateKey && dailySubmissions.has(dateKey)) {
-    const list = dailySubmissions.get(dateKey)!;
-    const sub = list.find((s) => s.id === id);
-    if (sub) {
-      sub.reactions = (sub.reactions || 0) + 1;
-      return res.json({ success: true, reactions: sub.reactions });
+  if (dateKey && typeof dateKey === 'string' && dailySubmissions.has(dateKey)) {
+    sub = dailySubmissions.get(dateKey)!.find((s) => s.id === id);
+  }
+  if (!sub) {
+    for (const dayList of dailySubmissions.values()) {
+      sub = dayList.find((item) => item.id === id);
+      if (sub) break;
     }
   }
-  for (const dayList of dailySubmissions.values()) {
-    const s = dayList.find((item) => item.id === id);
-    if (s) {
-      s.reactions = (s.reactions || 0) + 1;
-      return res.json({ success: true, reactions: s.reactions });
-    }
+
+  if (!sub) {
+    return res.status(404).json({ error: 'Submission not found.' });
   }
-  return res.status(404).json({ error: 'Submission not found.' });
+
+  if (userReactions.has(id)) {
+    return res.json({ success: true, reactions: sub.reactions || 0, alreadyReacted: true });
+  }
+
+  sub.reactions = (sub.reactions || 0) + 1;
+  userReactions.add(id);
+  sessionDailyReactions.set(session.sessionId, userReactions);
+
+  return res.json({ success: true, reactions: sub.reactions, alreadyReacted: false });
 });
 
 

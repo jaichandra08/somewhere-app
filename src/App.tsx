@@ -127,7 +127,8 @@ export default function App() {
     // 1. /experience/:id
     const expMatch = currentPath.match(/^\/experience\/([^/?#]+)/);
     if (expMatch) {
-      if (loadingExp) {
+      const expId = expMatch[1];
+      if (loadingExp || (!selectedExperience && !expError) || (selectedExperience && selectedExperience.id !== expId && !expError)) {
         return (
           <div className="w-full max-w-lg mx-auto py-20 flex flex-col items-center gap-3 text-stone-500 text-xs">
             <div className="w-6 h-6 border-2 border-stone-800 dark:border-stone-200 border-t-transparent rounded-full animate-spin" />
@@ -135,7 +136,7 @@ export default function App() {
           </div>
         );
       }
-      if (expError || !selectedExperience) {
+      if (expError || !selectedExperience || selectedExperience.id !== expId) {
         return (
           <div className="w-full max-w-md mx-auto py-16 text-center flex flex-col items-center gap-3">
             <h2 className="text-lg font-bold font-serif">That one wandered off.</h2>

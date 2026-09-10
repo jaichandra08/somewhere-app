@@ -67,16 +67,20 @@ export const DailyView: React.FC = () => {
     );
     const updatedMap = { ...reactedMap, [id]: true };
     setReactedMap(updatedMap);
-    try {
-      localStorage.setItem('somewhere_daily_reacted', JSON.stringify(updatedMap));
-    } catch {
-      // ignore
-    }
 
     try {
       await reactToDailySubmission(id);
+      try {
+        localStorage.setItem('somewhere_daily_reacted', JSON.stringify(updatedMap));
+      } catch {
+        // ignore
+      }
     } catch {
-      // ignore
+      // Roll back on failure
+      setSubmissions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, reactions: Math.max(0, (s.reactions || 1) - 1) } : s))
+      );
+      setReactedMap(reactedMap);
     }
   };
 

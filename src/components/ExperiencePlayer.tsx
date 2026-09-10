@@ -54,8 +54,28 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
   const [timeLeft, setTimeLeft] = useState(initialSeconds);
   const [timerRunning, setTimerRunning] = useState(false);
   const timerEndTimeRef = useRef<number | null>(null);
+  const activeTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const currentExpIdRef = useRef(experience.id);
+
+  const clearAllTimeouts = () => {
+    activeTimeoutsRef.current.forEach((t) => clearTimeout(t));
+    activeTimeoutsRef.current = [];
+  };
+
+  const safeSetTimeout = (fn: () => void, ms: number) => {
+    const targetId = experience.id;
+    const t = setTimeout(() => {
+      if (currentExpIdRef.current === targetId) {
+        fn();
+      }
+    }, ms);
+    activeTimeoutsRef.current.push(t);
+  };
 
   useEffect(() => {
+    currentExpIdRef.current = experience.id;
+    clearAllTimeouts();
+
     // Reset state on new experience
     completedRef.current = false;
     setCompleted(false);
@@ -72,6 +92,10 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
     // Check if saved
     const saved = getSavedIds().includes(experience.id);
     setIsSaved(saved);
+
+    return () => {
+      clearAllTimeouts();
+    };
   }, [experience.id]);
 
   // Timer interval with timestamp calculation to survive background tab throttle
@@ -132,6 +156,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
 
   const handleFinishCompletion = async () => {
     if (completedRef.current) return;
+    if (currentExpIdRef.current !== experience.id) return;
     if (isSevenWords && wordCount !== 7) return;
     completedRef.current = true;
     playSuccess();
@@ -141,7 +166,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
     } catch {
       // offline fallback
     }
-    if (onComplete) {
+    if (onComplete && currentExpIdRef.current === experience.id) {
       try {
         onComplete();
       } catch {
@@ -183,7 +208,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
     setCompletedSteps(next);
 
     if (experience.steps && next.length === experience.steps.length) {
-      setTimeout(() => {
+      safeSetTimeout(() => {
         handleFinishCompletion();
       }, 400);
     }
@@ -329,7 +354,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
                   onClick={() => {
                     playTap();
                     setSelectedChoice(option);
-                    setTimeout(() => handleFinishCompletion(), 350);
+                    safeSetTimeout(() => handleFinishCompletion(), 350);
                   }}
                   className={`w-full text-left p-4 rounded-xl border text-sm transition-all cursor-pointer ${
                     selectedChoice === option
@@ -354,7 +379,7 @@ export const ExperiencePlayer: React.FC<ExperiencePlayerProps> = ({
                   onClick={() => {
                     playTap();
                     setSelectedChoice(item);
-                    setTimeout(() => handleFinishCompletion(), 350);
+                    safeSetTimeout(() => handleFinishCompletion(), 350);
                   }}
                   className={`p-5 rounded-2xl border text-sm text-left flex flex-col justify-between min-h-[120px] transition-all cursor-pointer ${
                     selectedChoice === item

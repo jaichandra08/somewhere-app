@@ -13,6 +13,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { getRandomExperience, getDailyMoment, getCrowdCurrent } from '../lib/api.ts';
+import { getOfflineSeedExperiences } from '../lib/storage.ts';
 import { Experience, DailyMoment } from '../types.ts';
 import { playTap } from '../lib/sound.ts';
 
@@ -37,6 +38,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectExperience, onNaviga
   }, []);
 
   const handleIntentionClick = async (intention: 'LAUGH' | 'DO' | 'PEOPLE' | 'HEAD' | 'SURPRISE' | 'COMPANY') => {
+    if (loadingIntention) return;
     setLoadingIntention(intention);
     playTap();
     try {
@@ -44,7 +46,34 @@ export const HomeView: React.FC<HomeViewProps> = ({ onSelectExperience, onNaviga
       onSelectExperience(exp);
       onNavigate(`/experience/${exp.id}`);
     } catch {
-      // fallback
+      // Offline fallback respecting the intention
+      const seedList = getOfflineSeedExperiences();
+      let pool = seedList.filter((e) => e.active !== false);
+      switch (intention) {
+        case 'LAUGH':
+          pool = pool.filter((e) => e.category === 'FUNNY');
+          break;
+        case 'DO':
+          pool = pool.filter((e) => e.category === 'MICRO-MISSION');
+          break;
+        case 'PEOPLE':
+          pool = pool.filter((e) => e.category === 'SOCIAL-PRESENCE');
+          break;
+        case 'HEAD':
+          pool = pool.filter((e) => e.category === 'QUIET');
+          break;
+        case 'SURPRISE':
+          pool = pool.filter((e) => e.category === 'SURPRISE');
+          break;
+        case 'COMPANY':
+          pool = pool.filter((e) => e.category === 'FRIEND' || e.category === 'SOCIAL-PRESENCE');
+          break;
+      }
+      if (pool.length > 0) {
+        const fallbackExp = pool[Math.floor(Math.random() * pool.length)];
+        onSelectExperience(fallbackExp);
+        onNavigate(`/experience/${fallbackExp.id}`);
+      }
     } finally {
       setLoadingIntention(null);
     }
