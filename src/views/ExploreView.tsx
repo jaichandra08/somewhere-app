@@ -213,16 +213,25 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
       ) : experiences.length > 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
           {experiences.map((exp) => (
-            <button
+            <div
               key={exp.id}
               id={`experience-card-${exp.slug}`}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 playTap();
                 onSelectExperience(exp);
                 onNavigate(`/experience/${exp.id}`);
               }}
-              className="group p-5 rounded-2xl border border-stone-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 text-left hover:border-stone-400 dark:hover:border-stone-600 hover:shadow-xs transition-all active:scale-[0.99] cursor-pointer flex flex-col justify-between gap-3 min-h-[120px]"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  playTap();
+                  onSelectExperience(exp);
+                  onNavigate(`/experience/${exp.id}`);
+                }
+              }}
+              className="group p-5 rounded-2xl border border-stone-200/80 dark:border-stone-800 bg-white dark:bg-stone-900 text-left hover:border-stone-400 dark:hover:border-stone-600 hover:shadow-xs transition-all active:scale-[0.99] cursor-pointer flex flex-col justify-between gap-3 min-h-[120px] focus:outline-hidden focus:ring-2 focus:ring-stone-400 dark:focus:ring-stone-600"
             >
               <div className="flex items-start justify-between gap-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500">
@@ -269,7 +278,7 @@ export const ExploreView: React.FC<ExploreViewProps> = ({ onSelectExperience, on
                   </span>
                 ))}
               </div>
-            </button>
+            </div>
           ))}
         </div>
       ) : (
